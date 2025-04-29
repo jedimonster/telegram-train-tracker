@@ -1,0 +1,19 @@
+[Unit]
+Description=Telegram Train Information Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/Volumes/workplace/cline-rail-bot
+ExecStart=/usr/bin/python3 /Volumes/workplace/cline-rail-bot/train_bot.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Ensure environment variables are loaded
+EnvironmentFile=/Volumes/workplace/cline-rail-bot/.env
+
+[Install]
+WantedBy=multi-user.target
