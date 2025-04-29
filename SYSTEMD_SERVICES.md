@@ -117,6 +117,7 @@ sudo journalctl -u train-poller.service -f
 The service files are configured to:
 
 - Run as the root user (you may want to change this to a dedicated user for security)
+- Use a Python virtual environment located at `/home/railbot/telegram-train-tracker/venv/`
 - Use the .env file in the project directory for environment variables
 - Restart automatically if the services crash
 - Output logs to the system journal

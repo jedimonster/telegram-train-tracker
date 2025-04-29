@@ -6,14 +6,14 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/home/railbot/telegram-train-tracker/
-ExecStart=/usr/bin/python3 /home/railbot/telegram-train-tracker/run_poller.py --daemon --interval 300
+ExecStart=/home/railbot/telegram-train-tracker/venv/bin/python /home/railbot/telegram-train-tracker/run_poller.py --daemon --interval 300
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
 # Ensure environment variables are loaded
-EnvironmentFile=/Volumes/workplace/cline-rail-bot/.env
+EnvironmentFile=/home/railbot/telegram-train-tracker/.env
 
 [Install]
 WantedBy=multi-user.target
