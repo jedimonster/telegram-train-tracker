@@ -11,7 +11,7 @@ import dateutil
 import requests
 from dateutil.parser import parse
 
-from date_utils import next_weekday
+from src.train_bot.utils.date_utils import next_weekday
 from train_stations import TRAIN_STATIONS
 from load_env import init_env
 

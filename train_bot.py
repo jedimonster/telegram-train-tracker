@@ -26,7 +26,7 @@ from telegram.ext import (
 
 import train_facade
 from train_stations import TRAIN_STATIONS, FAVORITE_TRAIN_STATIONS
-from date_utils import WEEKDAYS, next_weekday
+from src.train_bot.utils.date_utils import WEEKDAYS, next_weekday
 from load_env import init_env
 
 # Enable logging
@@ -200,14 +200,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the /status command to check train status."""
     user = update.effective_user
+    message_id = update.message.message_id
     logger.debug(f"Command /status executed by user {user.id} ({user.username})")
     
-    # Clear any previous status data
-    if "status" in context.user_data:
-        del context.user_data["status"]
-    
-    # Initialize status data
-    context.user_data["status"] = {}
+    # Initialize status data with message-specific key
+    context.user_data[f"status_{message_id}"] = {}
     
     keyboard = [
         [
@@ -225,10 +222,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the /subscribe command to subscribe to train updates."""
     user = update.effective_user
+    message_id = update.message.message_id
     logger.debug(f"Command /subscribe executed by user {user.id} ({user.username})")
     
-    # Store an empty context for building the subscription
-    context.user_data["subscription"] = {}
+    # Store an empty context for building the subscription with message-specific key
+    context.user_data[f"subscription_{message_id}"] = {}
     
     # Show departure station selection
     return await select_departure_station(update, context)
@@ -310,10 +308,11 @@ async def select_departure_station(update: Update, context: ContextTypes.DEFAULT
 async def show_all_stations(update: Update, context: ContextTypes.DEFAULT_TYPE, prefix="dep") -> int:
     """Show all stations for selection."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     # Get the current page from context or default to 0
-    page = context.user_data.get("station_page", 0)
+    page = context.user_data.get(f"station_page_{message_id}", 0)
     
     # Sort stations alphabetically by English name
     sorted_stations = sorted(TRAIN_STATIONS, key=lambda x: x["english"])
@@ -366,6 +365,7 @@ async def show_all_stations(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 async def handle_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle pagination for station lists."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     # Extract page number and prefix from callback data
@@ -378,7 +378,7 @@ async def handle_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     prefix = "_".join(parts[1:-1])
     
     # Store the new page in context
-    context.user_data["station_page"] = page
+    context.user_data[f"station_page_{message_id}"] = page
     
     # Show the stations for this page
     return await show_all_stations(update, context, prefix)
@@ -386,6 +386,7 @@ async def handle_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Go back to the favorites selection."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     try:
@@ -397,7 +398,7 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         prefix = "_".join(parts[3:])
         
         # Reset the page
-        context.user_data["station_page"] = 0
+        context.user_data[f"station_page_{message_id}"] = 0
         
         # Return to the appropriate state
         if prefix == "dep":
@@ -420,11 +421,12 @@ async def back_to_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def select_arrival_station(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show arrival station selection."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     # Check if this is a show all stations request
     if query.data == "show_all_dep":
-        context.user_data["station_page"] = 0
+        context.user_data[f"station_page_{message_id}"] = 0
         return await show_all_stations(update, context, "dep")
     
     # Check if this is a manage favorites request
@@ -439,7 +441,7 @@ async def select_arrival_station(update: Update, context: ContextTypes.DEFAULT_T
         for station in TRAIN_STATIONS:
             if station["id"] == station_id:
                 # Store the selected departure station
-                context.user_data["subscription"]["departure_station"] = {
+                context.user_data[f"subscription_{message_id}"]["departure_station"] = {
                     "id": station["id"],
                     "name": station["english"]
                 }
@@ -457,7 +459,7 @@ async def select_arrival_station(update: Update, context: ContextTypes.DEFAULT_T
     # Create a keyboard with favorite stations (excluding the departure station)
     keyboard = []
     for station in favorite_stations:
-        if station["id"] != context.user_data["subscription"].get("departure_station", {}).get("id"):
+        if station["id"] != context.user_data[f"subscription_{message_id}"].get("departure_station", {}).get("id"):
             keyboard.append(
                 [InlineKeyboardButton(
                     station["english"], 
@@ -474,7 +476,7 @@ async def select_arrival_station(update: Update, context: ContextTypes.DEFAULT_T
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(
-        f"Selected departure: {context.user_data['subscription']['departure_station']['name']}\n"
+        f"Selected departure: {context.user_data[f'subscription_{message_id}']['departure_station']['name']}\n"
         f"Please select your arrival station:", 
         reply_markup=reply_markup
     )
@@ -485,6 +487,7 @@ async def select_arrival_station(update: Update, context: ContextTypes.DEFAULT_T
 async def select_day_of_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show day of week selection."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     # Extract the station ID from the callback data
@@ -495,7 +498,7 @@ async def select_day_of_week(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for station in TRAIN_STATIONS:
             if station["id"] == station_id:
                 # Store the selected arrival station
-                context.user_data["subscription"]["arrival_station"] = {
+                context.user_data[f"subscription_{message_id}"]["arrival_station"] = {
                     "id": station["id"],
                     "name": station["english"]
                 }
@@ -512,8 +515,8 @@ async def select_day_of_week(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(
-        f"Selected route: {context.user_data['subscription']['departure_station']['name']} → "
-        f"{context.user_data['subscription']['arrival_station']['name']}\n"
+        f"Selected route: {context.user_data[f'subscription_{message_id}']['departure_station']['name']} → "
+        f"{context.user_data[f'subscription_{message_id}']['arrival_station']['name']}\n"
         f"Please select the day of the week:", 
         reply_markup=reply_markup
     )
@@ -524,14 +527,15 @@ async def select_day_of_week(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show time selection."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     # Extract the day from the callback data
     if query.data.startswith("day_"):
         if query.data == "day_all_weekdays":
             # Store that we're subscribing to all weekdays
-            context.user_data["subscription"]["all_weekdays"] = True
-            context.user_data["subscription"]["day_of_week"] = {
+            context.user_data[f"subscription_{message_id}"]["all_weekdays"] = True
+            context.user_data[f"subscription_{message_id}"]["day_of_week"] = {
                 "num": 0,  # Start with Sunday
                 "name": "All Weekdays (Sun-Thu)"
             }
@@ -540,16 +544,16 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
             day_name = WEEKDAYS._member_names_[day_num]
             
             # Store the selected day
-            context.user_data["subscription"]["day_of_week"] = {
+            context.user_data[f"subscription_{message_id}"]["day_of_week"] = {
                 "num": day_num,
                 "name": day_name
             }
-            context.user_data["subscription"]["all_weekdays"] = False
+            context.user_data[f"subscription_{message_id}"]["all_weekdays"] = False
     
     # Get available train times for this route on this day
-    departure_id = context.user_data["subscription"]["departure_station"]["id"]
-    arrival_id = context.user_data["subscription"]["arrival_station"]["id"]
-    day_num = context.user_data["subscription"]["day_of_week"]["num"]
+    departure_id = context.user_data[f"subscription_{message_id}"]["departure_station"]["id"]
+    arrival_id = context.user_data[f"subscription_{message_id}"]["arrival_station"]["id"]
+    day_num = context.user_data[f"subscription_{message_id}"]["day_of_week"]["num"]
     
     try:
         train_times = train_facade.get_train_times(departure_id, arrival_id, day_num)
@@ -580,9 +584,9 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            f"Selected route: {context.user_data['subscription']['departure_station']['name']} → "
-            f"{context.user_data['subscription']['arrival_station']['name']}\n"
-            f"Selected day: {context.user_data['subscription']['day_of_week']['name']}\n"
+            f"Selected route: {context.user_data[f'subscription_{message_id}']['departure_station']['name']} → "
+            f"{context.user_data[f'subscription_{message_id}']['arrival_station']['name']}\n"
+            f"Selected day: {context.user_data[f'subscription_{message_id}']['day_of_week']['name']}\n"
             f"Please select the departure time:", 
             reply_markup=reply_markup
         )
@@ -600,6 +604,7 @@ async def select_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
 async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Confirm subscription details."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     # Extract the time from the callback data
@@ -611,7 +616,7 @@ async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYP
         formatted_time = departure_dt.strftime("%H:%M")
         
         # Store the selected time
-        context.user_data["subscription"]["departure_time"] = {
+        context.user_data[f"subscription_{message_id}"]["departure_time"] = {
             "raw": time_str,
             "formatted": formatted_time
         }
@@ -626,7 +631,7 @@ async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     # Format the subscription details
-    subscription = context.user_data["subscription"]
+    subscription = context.user_data[f"subscription_{message_id}"]
     details = (
         f"Please confirm your subscription:\n\n"
         f"Route: {subscription['departure_station']['name']} → {subscription['arrival_station']['name']}\n"
@@ -643,6 +648,7 @@ async def confirm_subscription(update: Update, context: ContextTypes.DEFAULT_TYP
 async def save_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Save the subscription to the database."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     if query.data == "confirm_yes":
@@ -653,7 +659,7 @@ async def save_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )
         
         # Get subscription details
-        subscription = context.user_data["subscription"]
+        subscription = context.user_data[f"subscription_{message_id}"]
         
         # Connect to database
         conn = sqlite3.connect(DB_PATH)
@@ -732,8 +738,9 @@ async def save_subscription(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await query.edit_message_text("Subscription cancelled.")
     
     # Clear the subscription data
-    if "subscription" in context.user_data:
-        del context.user_data["subscription"]
+    subscription_key = f"subscription_{message_id}"
+    if subscription_key in context.user_data:
+        del context.user_data[subscription_key]
     
     return ConversationHandler.END
 
@@ -966,11 +973,12 @@ async def favorites_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def handle_favorite_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the favorite action selection."""
     query = update.callback_query
+    message_id = query.message.message_id
     await query.answer()
     
     if query.data == "add_favorite":
         # Reset the page
-        context.user_data["station_page"] = 0
+        context.user_data[f"station_page_{message_id}"] = 0
         
         # Show all stations for adding to favorites
         return await show_all_stations(update, context, "add_fav")
@@ -1229,14 +1237,15 @@ async def resume_notifications_command(update: Update, context: ContextTypes.DEF
 async def check_train_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle the callback for checking train status."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback check_train_status executed with data: {query.data}")
     await query.answer()
     
     # Store the status type
     if query.data == "status_future":
-        context.user_data["status"]["type"] = "future"
+        context.user_data[f"status_{message_id}"]["type"] = "future"
     elif query.data == "status_current":
-        context.user_data["status"]["type"] = "current"
+        context.user_data[f"status_{message_id}"]["type"] = "current"
     
     # Show departure station selection
     return await select_status_departure_station(update, context)
@@ -1290,7 +1299,8 @@ async def show_status_all_stations(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
     
     # Get the current page from context or default to 0
-    page = context.user_data.get("station_page", 0)
+    message_id = query.message.message_id
+    page = context.user_data.get(f"station_page_{message_id}", 0)
     
     # Sort stations alphabetically by English name
     sorted_stations = sorted(TRAIN_STATIONS, key=lambda x: x["english"])
@@ -1339,6 +1349,7 @@ async def show_status_all_stations(update: Update, context: ContextTypes.DEFAULT
 async def handle_status_pagination(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle pagination for status station lists."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback handle_status_pagination executed with data: {query.data}")
     await query.answer()
     
@@ -1348,7 +1359,7 @@ async def handle_status_pagination(update: Update, context: ContextTypes.DEFAULT
     page = int(page)
     
     # Store the new page in context
-    context.user_data["station_page"] = page
+    context.user_data[f"station_page_{message_id}"] = page
     
     # Show the stations for this page
     return await show_status_all_stations(update, context, prefix)
@@ -1356,6 +1367,7 @@ async def handle_status_pagination(update: Update, context: ContextTypes.DEFAULT
 async def back_to_status_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Go back to the favorites selection for status."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback back_to_status_favorites executed with data: {query.data}")
     await query.answer()
     
@@ -1368,7 +1380,7 @@ async def back_to_status_favorites(update: Update, context: ContextTypes.DEFAULT
         prefix = "_".join(parts[4:])
         
         # Reset the page
-        context.user_data["station_page"] = 0
+        context.user_data[f"station_page_{message_id}"] = 0
         
         # Return to the appropriate state
         if prefix == "status_dep":
@@ -1389,12 +1401,13 @@ async def back_to_status_favorites(update: Update, context: ContextTypes.DEFAULT
 async def select_status_arrival_station(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show arrival station selection for status check."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback select_status_arrival_station executed with data: {query.data}")
     await query.answer()
     
     # Check if this is a show all stations request
     if query.data == "status_show_all_dep":
-        context.user_data["station_page"] = 0
+        context.user_data[f"station_page_{message_id}"] = 0
         return await show_status_all_stations(update, context, "status_dep")
     
     # Check if this is a manage favorites request
@@ -1409,7 +1422,7 @@ async def select_status_arrival_station(update: Update, context: ContextTypes.DE
         for station in TRAIN_STATIONS:
             if station["id"] == station_id:
                 # Store the selected departure station
-                context.user_data["status"]["departure_station"] = {
+                context.user_data[f"status_{message_id}"]["departure_station"] = {
                     "id": station["id"],
                     "name": station["english"]
                 }
@@ -1427,7 +1440,7 @@ async def select_status_arrival_station(update: Update, context: ContextTypes.DE
     # Create a keyboard with favorite stations (excluding the departure station)
     keyboard = []
     for station in favorite_stations:
-        if station["id"] != context.user_data["status"].get("departure_station", {}).get("id"):
+        if station["id"] != context.user_data[f"status_{message_id}"].get("departure_station", {}).get("id"):
             keyboard.append(
                 [InlineKeyboardButton(
                     station["english"], 
@@ -1444,7 +1457,7 @@ async def select_status_arrival_station(update: Update, context: ContextTypes.DE
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(
-        f"Selected departure: {context.user_data['status']['departure_station']['name']}\n"
+        f"Selected departure: {context.user_data[f'status_{message_id}']['departure_station']['name']}\n"
         f"Please select your arrival station:", 
         reply_markup=reply_markup
     )
@@ -1454,12 +1467,13 @@ async def select_status_arrival_station(update: Update, context: ContextTypes.DE
 async def select_status_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show date selection for future train status."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback select_status_date executed with data: {query.data}")
     await query.answer()
     
     # Check if this is a show all stations request
     if query.data == "status_show_all_arr":
-        context.user_data["station_page"] = 0
+        context.user_data[f"station_page_{message_id}"] = 0
         return await show_status_all_stations(update, context, "status_arr")
     
     # Check if this is a manage favorites request
@@ -1474,14 +1488,14 @@ async def select_status_date(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for station in TRAIN_STATIONS:
             if station["id"] == station_id:
                 # Store the selected arrival station
-                context.user_data["status"]["arrival_station"] = {
+                context.user_data[f"status_{message_id}"]["arrival_station"] = {
                     "id": station["id"],
                     "name": station["english"]
                 }
                 break
     
     # If this is a current train status check, get the times now
-    if context.user_data["status"]["type"] == "current":
+    if context.user_data[f"status_{message_id}"]["type"] == "current":
         return await get_current_train_status(update, context)
     
     # For future train status, show date selection
@@ -1504,8 +1518,8 @@ async def select_status_date(update: Update, context: ContextTypes.DEFAULT_TYPE)
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(
-        f"Selected route: {context.user_data['status']['departure_station']['name']} → "
-        f"{context.user_data['status']['arrival_station']['name']}\n"
+        f"Selected route: {context.user_data[f'status_{message_id}']['departure_station']['name']} → "
+        f"{context.user_data[f'status_{message_id}']['arrival_station']['name']}\n"
         f"Please select the date:", 
         reply_markup=reply_markup
     )
@@ -1515,6 +1529,7 @@ async def select_status_date(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def get_future_train_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show available train times for the selected date."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback get_future_train_status executed with data: {query.data}")
     await query.answer()
     
@@ -1524,7 +1539,7 @@ async def get_future_train_status(update: Update, context: ContextTypes.DEFAULT_
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
         
         # Store the selected date
-        context.user_data["status"]["date"] = {
+        context.user_data[f"status_{message_id}"]["date"] = {
             "raw": date_str,
             "formatted": date_obj.strftime("%A, %B %d, %Y")
         }
@@ -1535,21 +1550,21 @@ async def get_future_train_status(update: Update, context: ContextTypes.DEFAULT_
     day_of_week = (day_of_week + 1) % 7
     
     # Get train times for the selected route and date
-    departure_id = context.user_data["status"]["departure_station"]["id"]
-    arrival_id = context.user_data["status"]["arrival_station"]["id"]
+    departure_id = context.user_data[f"status_{message_id}"]["departure_station"]["id"]
+    arrival_id = context.user_data[f"status_{message_id}"]["arrival_station"]["id"]
     
     try:
         train_times = train_facade.get_train_times(departure_id, arrival_id, day_of_week)
         
         if not train_times:
             await query.edit_message_text(
-                f"No trains found for this route on {context.user_data['status']['date']['formatted']}.\n"
+                f"No trains found for this route on {context.user_data[f'status_{message_id}']['date']['formatted']}.\n"
                 f"Please try a different date or route."
             )
             return ConversationHandler.END
         
         # Store train times in context for later use
-        context.user_data["status"]["train_times"] = train_times
+        context.user_data[f"status_{message_id}"]["train_times"] = train_times
         
         # Create a keyboard with available times (3 buttons per row)
         keyboard = []
@@ -1584,9 +1599,9 @@ async def get_future_train_status(update: Update, context: ContextTypes.DEFAULT_
         
         await query.edit_message_text(
             f"🚆 Train Schedule\n\n"
-            f"Route: {context.user_data['status']['departure_station']['name']} → "
-            f"{context.user_data['status']['arrival_station']['name']}\n"
-            f"Date: {context.user_data['status']['date']['formatted']}\n\n"
+            f"Route: {context.user_data[f'status_{message_id}']['departure_station']['name']} → "
+            f"{context.user_data[f'status_{message_id}']['arrival_station']['name']}\n"
+            f"Date: {context.user_data[f'status_{message_id}']['date']['formatted']}\n\n"
             f"Please select a train time:",
             reply_markup=reply_markup
         )
@@ -1603,6 +1618,7 @@ async def get_future_train_status(update: Update, context: ContextTypes.DEFAULT_
 async def show_future_train_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show details for the selected future train."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback show_future_train_details executed with data: {query.data}")
     await query.answer()
     
@@ -1616,7 +1632,7 @@ async def show_future_train_details(update: Update, context: ContextTypes.DEFAUL
             train_index = int(query.data[12:])  # Remove "status_time_" prefix
             
             # Get the selected train details
-            train_times = context.user_data["status"]["train_times"]
+            train_times = context.user_data[f"status_{message_id}"]["train_times"]
             if train_index >= len(train_times):
                 await query.edit_message_text("Invalid train selection. Please try again.")
                 return ConversationHandler.END
@@ -1637,16 +1653,16 @@ async def show_future_train_details(update: Update, context: ContextTypes.DEFAUL
             duration_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
             
             # Check if date is available in context, if not add today's date
-            if "date" not in context.user_data["status"]:
+            if "date" not in context.user_data[f"status_{message_id}"]:
                 today = datetime.now().date()
-                context.user_data["status"]["date"] = {
+                context.user_data[f"status_{message_id}"]["date"] = {
                     "raw": today.strftime("%Y-%m-%d"),
                     "formatted": today.strftime("%A, %B %d, %Y")
                 }
             
             # Get train status information
-            departure_id = context.user_data["status"]["departure_station"]["id"]
-            arrival_id = context.user_data["status"]["arrival_station"]["id"]
+            departure_id = context.user_data[f"status_{message_id}"]["departure_station"]["id"]
+            arrival_id = context.user_data[f"status_{message_id}"]["arrival_station"]["id"]
             
             try:
                 train_status = train_facade.get_delay_from_api(
@@ -1681,14 +1697,14 @@ async def show_future_train_details(update: Update, context: ContextTypes.DEFAUL
             
             # Store the current time as last updated
             last_updated = now.strftime("%H:%M:%S")
-            context.user_data["status"]["last_updated"] = last_updated
+            context.user_data[f"status_{message_id}"]["last_updated"] = last_updated
             
             # Format the train details
             response = (
                 f"🚆 Train Details\n\n"
-                f"Route: {context.user_data['status']['departure_station']['name']} → "
-                f"{context.user_data['status']['arrival_station']['name']}\n"
-                f"Date: {context.user_data['status']['date']['formatted']}\n\n"
+                f"Route: {context.user_data[f'status_{message_id}']['departure_station']['name']} → "
+                f"{context.user_data[f'status_{message_id}']['arrival_station']['name']}\n"
+                f"Date: {context.user_data[f'status_{message_id}']['date']['formatted']}\n\n"
                 f"Status: {status_str}\n"
                 f"{time_str}\n"
                 f"Duration: {duration_str}\n"
@@ -1729,6 +1745,7 @@ async def show_future_train_details(update: Update, context: ContextTypes.DEFAUL
 async def get_current_train_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show available current train times for the selected route."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback get_current_train_status executed with data: {query.data}")
     await query.answer()
     
@@ -1742,8 +1759,8 @@ async def get_current_train_status(update: Update, context: ContextTypes.DEFAULT
     day_of_week = (day_of_week + 1) % 7
     
     # Get train times for the selected route and today
-    departure_id = context.user_data["status"]["departure_station"]["id"]
-    arrival_id = context.user_data["status"]["arrival_station"]["id"]
+    departure_id = context.user_data[f"status_{message_id}"]["departure_station"]["id"]
+    arrival_id = context.user_data[f"status_{message_id}"]["arrival_station"]["id"]
     
     try:
         train_times = train_facade.get_train_times(departure_id, arrival_id, day_of_week)
@@ -1778,7 +1795,7 @@ async def get_current_train_status(update: Update, context: ContextTypes.DEFAULT
             return ConversationHandler.END
         
         # Store relevant trains in context for later use
-        context.user_data["status"]["train_times"] = relevant_trains
+        context.user_data[f"status_{message_id}"]["train_times"] = relevant_trains
         
         # Create a keyboard with available times (3 buttons per row)
         keyboard = []
@@ -1817,8 +1834,8 @@ async def get_current_train_status(update: Update, context: ContextTypes.DEFAULT
         
         await query.edit_message_text(
             f"🚆 Current Train Status\n\n"
-            f"Route: {context.user_data['status']['departure_station']['name']} → "
-            f"{context.user_data['status']['arrival_station']['name']}\n"
+            f"Route: {context.user_data[f'status_{message_id}']['departure_station']['name']} → "
+            f"{context.user_data[f'status_{message_id}']['arrival_station']['name']}\n"
             f"Current time: {current_hour}\n\n"
             f"Please select a train time:\n"
             f"🚂 = Currently running\n"
@@ -1838,11 +1855,12 @@ async def get_current_train_status(update: Update, context: ContextTypes.DEFAULT
 async def back_to_train_list(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Go back to the train list."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback back_to_train_list executed with data: {query.data}")
     await query.answer()
     
     # Check if this is a future or current train status
-    if context.user_data["status"]["type"] == "future":
+    if context.user_data[f"status_{message_id}"]["type"] == "future":
         return await get_future_train_status(update, context)
     else:
         return await get_current_train_status(update, context)
@@ -1850,6 +1868,7 @@ async def back_to_train_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def show_current_train_details(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show details for the selected current train."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback show_current_train_details executed with data: {query.data}")
     await query.answer()
     
@@ -1863,7 +1882,7 @@ async def show_current_train_details(update: Update, context: ContextTypes.DEFAU
             train_index = int(query.data[12:])  # Remove "status_time_" prefix
             
             # Get the selected train details
-            train_times = context.user_data["status"]["train_times"]
+            train_times = context.user_data[f"status_{message_id}"]["train_times"]
             if train_index >= len(train_times):
                 await query.edit_message_text("Invalid train selection. Please try again.")
                 return ConversationHandler.END
@@ -1884,8 +1903,8 @@ async def show_current_train_details(update: Update, context: ContextTypes.DEFAU
             is_running = departure_dt.time() <= current_time <= arrival_dt.time()
             
             # Get train status information
-            departure_id = context.user_data["status"]["departure_station"]["id"]
-            arrival_id = context.user_data["status"]["arrival_station"]["id"]
+            departure_id = context.user_data[f"status_{message_id}"]["departure_station"]["id"]
+            arrival_id = context.user_data[f"status_{message_id}"]["arrival_station"]["id"]
             
             try:
                 train_status = train_facade.get_delay_from_api(
@@ -1927,8 +1946,8 @@ async def show_current_train_details(update: Update, context: ContextTypes.DEFAU
             # Format the train details
             response = (
                 f"🚆 Train Details\n\n"
-                f"Route: {context.user_data['status']['departure_station']['name']} → "
-                f"{context.user_data['status']['arrival_station']['name']}\n\n"
+                f"Route: {context.user_data[f'status_{message_id}']['departure_station']['name']} → "
+                f"{context.user_data[f'status_{message_id}']['arrival_station']['name']}\n\n"
                 f"Status: {status_str}\n"
                 f"{time_str}\n"
                 f"Duration: {duration_str}\n"
@@ -1962,13 +1981,21 @@ async def show_current_train_details(update: Update, context: ContextTypes.DEFAU
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Cancel and end the conversation."""
+    # Get message ID from either message or callback query
+    message_id = update.message.message_id if update.message else update.callback_query.message.message_id
+    
+    # Clear conversation-specific data
+    status_key = f"status_{message_id}"
+    subscription_key = f"subscription_{message_id}"
+    if status_key in context.user_data:
+        del context.user_data[status_key]
+    if subscription_key in context.user_data:
+        del context.user_data[subscription_key]
+    
     if update.message:
         await update.message.reply_text("Operation cancelled.")
     else:
         await update.callback_query.edit_message_text("Operation cancelled.")
-    
-    # Clear any user data
-    context.user_data.clear()
     
     return ConversationHandler.END
 
@@ -2022,6 +2049,7 @@ def main() -> None:
        # Add conversation handler for status command
     status_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("status", status_command)],
+        allow_reentry=True,  # Allow multiple concurrent conversations
         states={
             SELECT_ACTION: [
                 CallbackQueryHandler(check_train_status, pattern="^status_(future|current)$"),
@@ -2050,6 +2078,19 @@ def main() -> None:
                 CallbackQueryHandler(refresh_train_status, pattern="^refresh_status_"),
                 CallbackQueryHandler(subscribe_from_status, pattern="^subscribe_train_"),
             ],
+            # Add MANAGE_FAVORITES state to handle favorites management from status flow
+            MANAGE_FAVORITES: [
+                CallbackQueryHandler(handle_favorite_action, pattern="^(add_favorite|remove_favorite|favorites_done)$"),
+            ],
+            ADD_FAVORITE: [
+                CallbackQueryHandler(add_favorite_station, pattern="^add_fav_"),
+                CallbackQueryHandler(handle_pagination, pattern="^page_"),
+                CallbackQueryHandler(back_to_favorites, pattern="^back_to_favorites_"),
+            ],
+            REMOVE_FAVORITE: [
+                CallbackQueryHandler(remove_favorite_station, pattern="^rem_fav_"),
+                CallbackQueryHandler(remove_favorite_station, pattern="^favorites_done$"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -2057,6 +2098,7 @@ def main() -> None:
     # Add conversation handler for subscribe command
     subscribe_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("subscribe", subscribe_command)],
+        allow_reentry=True,  # Allow multiple concurrent conversations
         states={
             SELECT_DEPARTURE: [
                 CallbackQueryHandler(select_arrival_station, pattern="^dep_"),
@@ -2081,6 +2123,19 @@ def main() -> None:
             CONFIRM_SUBSCRIPTION: [
                 CallbackQueryHandler(save_subscription, pattern="^confirm_"),
             ],
+            # Add MANAGE_FAVORITES state to handle favorites management from subscribe flow
+            MANAGE_FAVORITES: [
+                CallbackQueryHandler(handle_favorite_action, pattern="^(add_favorite|remove_favorite|favorites_done)$"),
+            ],
+            ADD_FAVORITE: [
+                CallbackQueryHandler(add_favorite_station, pattern="^add_fav_"),
+                CallbackQueryHandler(handle_pagination, pattern="^page_"),
+                CallbackQueryHandler(back_to_favorites, pattern="^back_to_favorites_"),
+            ],
+            REMOVE_FAVORITE: [
+                CallbackQueryHandler(remove_favorite_station, pattern="^rem_fav_"),
+                CallbackQueryHandler(remove_favorite_station, pattern="^favorites_done$"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -2088,6 +2143,7 @@ def main() -> None:
     # Add conversation handler for unsubscribe command
     unsubscribe_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("unsubscribe", unsubscribe_command)],
+        allow_reentry=True,  # Allow multiple concurrent conversations
         states={
             SELECT_SUBSCRIPTION: [
                 CallbackQueryHandler(cancel_subscription, pattern="^unsub_"),
@@ -2099,6 +2155,7 @@ def main() -> None:
     # Add conversation handler for favorites command
     favorites_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("favorites", favorites_command)],
+        allow_reentry=True,  # Allow multiple concurrent conversations
         states={
             MANAGE_FAVORITES: [
                 CallbackQueryHandler(handle_favorite_action, pattern="^(add_favorite|remove_favorite|favorites_done)$"),
@@ -2137,6 +2194,7 @@ def main() -> None:
 async def refresh_train_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Refresh the train status."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback refresh_train_status executed with data: {query.data}")
     await query.answer()
     
@@ -2147,7 +2205,7 @@ async def refresh_train_status(update: Update, context: ContextTypes.DEFAULT_TYP
             
             # Simply call the show_future_train_details function with the same train index
             # We'll create a new callback query data with the train index
-            context.user_data["callback_data"] = f"status_time_{train_index}"
+            context.user_data[f"callback_data_{message_id}"] = f"status_time_{train_index}"
             query.data = f"status_time_{train_index}"
             
             return await show_future_train_details(update, context)
@@ -2161,6 +2219,7 @@ async def refresh_train_status(update: Update, context: ContextTypes.DEFAULT_TYP
 async def subscribe_from_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Subscribe to a train from the status view."""
     query = update.callback_query
+    message_id = query.message.message_id
     logger.debug(f"Callback subscribe_from_status executed with data: {query.data}")
     await query.answer()
     
@@ -2170,17 +2229,17 @@ async def subscribe_from_status(update: Update, context: ContextTypes.DEFAULT_TY
             train_index = int(query.data[15:])  # Remove "subscribe_train_" prefix
             
             # Get the selected train details
-            train_times = context.user_data["status"]["train_times"]
+            train_times = context.user_data[f"status_{message_id}"]["train_times"]
             if train_index >= len(train_times):
                 await query.edit_message_text("Invalid train selection. Please try again.")
                 return ConversationHandler.END
             
             departure_time, arrival_time, switches = train_times[train_index]
             
-            # Initialize subscription data
-            context.user_data["subscription"] = {
-                "departure_station": context.user_data["status"]["departure_station"],
-                "arrival_station": context.user_data["status"]["arrival_station"],
+            # Initialize subscription data with message-specific key
+            context.user_data[f"subscription_{message_id}"] = {
+                "departure_station": context.user_data[f"status_{message_id}"]["departure_station"],
+                "arrival_station": context.user_data[f"status_{message_id}"]["arrival_station"],
                 "departure_time": {
                     "raw": departure_time,
                     "formatted": datetime.fromisoformat(departure_time).strftime("%H:%M")

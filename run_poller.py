@@ -16,7 +16,7 @@ Usage:
 
 import argparse
 import logging
-import time
+import asyncio
 import sys
 import os
 from datetime import datetime
@@ -33,7 +33,7 @@ logger.setLevel(logging.DEBUG)
 
 
 
-def run_daemon(interval):
+async def run_daemon(interval):
     """Run the poller as a daemon process with the specified interval."""
     logger.info(f"Starting poller daemon with {interval} second interval")
     
@@ -43,14 +43,14 @@ def run_daemon(interval):
             logger.info(f"Running poll at {start_time}")
             
             # Run the poller
-            subscription_poller.main()
+            await subscription_poller.main()
             
             # Calculate how long to sleep
             elapsed = (datetime.now() - start_time).total_seconds()
             sleep_time = max(0, interval - elapsed)
             
             logger.info(f"Poll completed in {elapsed:.2f} seconds. Sleeping for {sleep_time:.2f} seconds.")
-            time.sleep(sleep_time)
+            await asyncio.sleep(sleep_time)
             
     except KeyboardInterrupt:
         logger.info("Poller daemon stopped by user")
@@ -59,19 +59,19 @@ def run_daemon(interval):
         sys.exit(1)
 
 
-def run_once():
+async def run_once():
     """Run the poller once and exit."""
     logger.info("Running poller once")
     
     try:
-        subscription_poller.main()
+        await subscription_poller.main()
         logger.info("Poll completed successfully")
     except Exception as e:
         logger.error(f"Error in poller: {e}")
         sys.exit(1)
 
 
-def main():
+async def main():
     """Parse arguments and run the poller."""
     parser = argparse.ArgumentParser(description="Run the train subscription poller")
     
@@ -109,12 +109,12 @@ def main():
     # Run in the appropriate mode
     if args.daemon:
         logger.info("Running daemon")
-        run_daemon(args.interval)
+        await run_daemon(args.interval)
     else:  # args.once
         logger.info("Running once")
-        run_once()
+        await run_once()
 
 
 if __name__ == "__main__":
     logger.info("Starting")
-    main()
+    asyncio.run(main())

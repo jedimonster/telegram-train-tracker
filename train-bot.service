@@ -4,16 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
-WorkingDirectory=/home/railbot/telegram-train-tracker/
-ExecStart=/home/railbot/telegram-train-tracker/venv/bin/python /home/railbot/telegram-train-tracker/train_bot.py
-Restart=on-failure
+User=itaiaz
+WorkingDirectory=/Volumes/workplace/cline-rail-bot
+Environment=PYTHONPATH=/Volumes/workplace/cline-rail-bot
+ExecStart=/usr/bin/python3 /Volumes/workplace/cline-rail-bot/run.py
+Restart=always
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-# Ensure environment variables are loaded
-EnvironmentFile=/home/railbot/telegram-train-tracker/.env
 
 [Install]
 WantedBy=multi-user.target

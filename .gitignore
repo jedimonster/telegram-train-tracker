@@ -1,18 +1,9 @@
-# Environment variables
-.env
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Python cache files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-env/
 build/
 develop-eggs/
 dist/
@@ -24,20 +15,37 @@ lib64/
 parts/
 sdist/
 var/
+wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 
-# Logs
-*.log
-*.log.*
-
-# Virtual environment
+# Virtual Environment
 venv/
 ENV/
+env/
 
-# IDE files
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
+.project
+.pydevproject
+.settings/
+
+# Project specific
+.env
+*.db
+data/
+logs/
+*.log
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db

@@ -10,7 +10,7 @@ daemon process.
 
 import logging
 import os
-import sqlite3
+import aiosqlite
 import json
 from datetime import datetime, timedelta
 import time
@@ -22,7 +22,7 @@ from telegram.error import TelegramError
 
 import train_facade
 from train_stations import TRAIN_STATIONS
-from date_utils import WEEKDAYS, next_weekday
+from src.train_bot.utils.date_utils import WEEKDAYS, next_weekday
 from load_env import init_env
 
 # Configure logging
@@ -42,9 +42,13 @@ init_env()
 
 # Telegram bot token
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
-logger.info("Started bot")
+# Initialize bot in async context
+async def get_bot():
+    """Get an instance of the Telegram bot."""
+    return telegram.Bot(token=TELEGRAM_TOKEN)
+
+logger.info("Starting bot")
 
 def get_station_name(station_id):
     """Get the English name of a station by its ID."""
@@ -54,10 +58,10 @@ def get_station_name(station_id):
     return "Unknown Station"
 
 
-def check_subscription(subscription_id, user_id, telegram_id, departure_station, 
-                      arrival_station, day_of_week, departure_time, 
-                      last_status_json, notification_before_departure, 
-                      notification_delay_threshold, notifications_paused=False):
+async def check_subscription(subscription_id, user_id, telegram_id, departure_station, 
+                           arrival_station, day_of_week, departure_time, 
+                           last_status_json, notification_before_departure, 
+                           notification_delay_threshold, notifications_paused=False):
     """
     Check a single subscription for status changes and send notifications if needed.
     
@@ -177,18 +181,17 @@ def check_subscription(subscription_id, user_id, telegram_id, departure_station,
                         message += f"\n\n⚠️ Note: This journey requires changing trains at: {', '.join(switches)}"
                     
                     # Send the message
-                    asyncio.run(bot.send_message(chat_id=telegram_id, text=message))
+                    bot = await get_bot()
+                    await bot.send_message(chat_id=telegram_id, text=message)
                     notifications_sent += 1
                     
                     # Log the notification
-                    conn = sqlite3.connect(DB_PATH)
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "INSERT INTO notifications (subscription_id, notification_type, message) VALUES (?, ?, ?)",
-                        (subscription_id, "status_change", message)
-                    )
-                    conn.commit()
-                    conn.close()
+                    async with aiosqlite.connect(DB_PATH) as conn:
+                        await conn.execute(
+                            "INSERT INTO notifications (subscription_id, notification_type, message) VALUES (?, ?, ?)",
+                            (subscription_id, "status_change", message)
+                        )
+                        await conn.commit()
                 elif status_changed and notifications_paused:
                     logger.info(f"Status change for subscription {subscription_id} not sent - notifications paused")
                 
@@ -218,21 +221,20 @@ def check_subscription(subscription_id, user_id, telegram_id, departure_station,
                         message += "Status: On time"
                     
                     # Send the message
-                    asyncio.run(bot.send_message(chat_id=telegram_id, text=message))
+                    bot = await get_bot()
+                    await bot.send_message(chat_id=telegram_id, text=message)
                     notifications_sent += 1
                     
                     # Mark that we've sent the departure reminder
                     current_status["departure_reminder_sent"] = True
                     
                     # Log the notification
-                    conn = sqlite3.connect(DB_PATH)
-                    cursor = conn.cursor()
-                    cursor.execute(
-                        "INSERT INTO notifications (subscription_id, notification_type, message) VALUES (?, ?, ?)",
-                        (subscription_id, "departure_reminder", message)
-                    )
-                    conn.commit()
-                    conn.close()
+                    async with aiosqlite.connect(DB_PATH) as conn:
+                        await conn.execute(
+                            "INSERT INTO notifications (subscription_id, notification_type, message) VALUES (?, ?, ?)",
+                            (subscription_id, "departure_reminder", message)
+                        )
+                        await conn.commit()
                 elif (notification_before_departure <= minutes_until_departure <= notification_before_departure + 5 and
                       "departure_reminder_sent" not in last_status and notifications_paused):
                     logger.info(f"Departure reminder for subscription {subscription_id} not sent - notifications paused")
@@ -255,15 +257,13 @@ def check_subscription(subscription_id, user_id, telegram_id, departure_station,
         return last_status_json, 0
 
 
-def poll_subscriptions():
+async def poll_subscriptions():
     """Poll all active subscriptions and send notifications if needed."""
     try:
         # Connect to database
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        
-        # Get all active subscriptions with user info
-        cursor.execute("""
+        async with aiosqlite.connect(DB_PATH) as conn:
+            # Get all active subscriptions with user info
+            async with conn.execute("""
             SELECT 
                 s.subscription_id, s.user_id, u.telegram_id, 
                 s.departure_station, s.arrival_station, 
@@ -272,55 +272,52 @@ def poll_subscriptions():
             FROM subscriptions s
             JOIN users u ON s.user_id = u.user_id
             WHERE s.active = 1
-        """)
-        
-        subscriptions = cursor.fetchall()
-        logger.info(f"Checking {len(subscriptions)} active subscriptions")
-        
-        total_notifications = 0
-        
-        # Check each subscription
-        for subscription in subscriptions:
-            (
-                subscription_id, user_id, telegram_id, 
-                departure_station, arrival_station, 
-                day_of_week, departure_time, last_status,
-                notification_before_departure, notification_delay_threshold
-            ) = subscription
-            
-            # Check this subscription
-            updated_status, notifications_sent = check_subscription(
-                subscription_id, user_id, telegram_id, 
-                departure_station, arrival_station, 
-                day_of_week, departure_time, last_status,
-                notification_before_departure, notification_delay_threshold,
-                False  # Default to notifications not paused
-            )
-            
-            total_notifications += notifications_sent
-            
-            # Update the last status and check time
-            cursor.execute(
-                """
-                UPDATE subscriptions 
-                SET last_status = ?, last_checked = ? 
-                WHERE subscription_id = ?
-                """,
-                (updated_status, datetime.now().isoformat(), subscription_id)
-            )
-        
-        # Commit all updates
-        conn.commit()
-        logger.info(f"Polling complete. Sent {total_notifications} notifications.")
+        """) as cursor:
+                subscriptions = await cursor.fetchall()
+                logger.info(f"Checking {len(subscriptions)} active subscriptions")
+                
+                total_notifications = 0
+                
+                # Check each subscription
+                for subscription in subscriptions:
+                    (
+                        subscription_id, user_id, telegram_id, 
+                        departure_station, arrival_station, 
+                        day_of_week, departure_time, last_status,
+                        notification_before_departure, notification_delay_threshold
+                    ) = subscription
+                    
+                    # Check this subscription
+                    updated_status, notifications_sent = await check_subscription(
+                        subscription_id, user_id, telegram_id, 
+                        departure_station, arrival_station, 
+                        day_of_week, departure_time, last_status,
+                        notification_before_departure, notification_delay_threshold,
+                        False  # Default to notifications not paused
+                    )
+                    
+                    total_notifications += notifications_sent
+                    
+                    # Update the last status and check time
+                    await conn.execute(
+                        """
+                        UPDATE subscriptions 
+                        SET last_status = ?, last_checked = ? 
+                        WHERE subscription_id = ?
+                        """,
+                        (updated_status, datetime.now().isoformat(), subscription_id)
+                    )
+                    await conn.commit()
+                logger.info(f"Polling complete. Sent {total_notifications} notifications.")
         
     except Exception as e:
         logger.error(f"Error in poll_subscriptions: {e}")
     finally:
         if 'conn' in locals():
-            conn.close()
+            await conn.close()
 
 
-def main():
+async def main():
     """Main function to run the poller."""
     logger.info("Starting subscription poller")
     
@@ -343,11 +340,11 @@ def main():
             return
         
         # Poll subscriptions
-        poll_subscriptions()
+        await poll_subscriptions()
         
     except Exception as e:
         logger.error(f"Error in main: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
