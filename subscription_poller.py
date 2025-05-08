@@ -19,6 +19,7 @@ import asyncio
 
 import telegram
 from telegram.error import TelegramError
+from telegram.ext import ApplicationBuilder
 
 import train_facade
 from train_stations import TRAIN_STATIONS
@@ -43,10 +44,18 @@ init_env()
 # Telegram bot token
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 
+# Global bot instance
+_bot = None
+
 # Initialize bot in async context
 async def get_bot():
-    """Get an instance of the Telegram bot."""
-    return telegram.Bot(token=TELEGRAM_TOKEN)
+    """Get a shared instance of the Telegram bot."""
+    global _bot
+    if _bot is None:
+        # Initialize with default connection pool settings for v20+
+        # which has better defaults than the previous versions
+        _bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    return _bot
 
 logger.info("Starting bot")
 
