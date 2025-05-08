@@ -134,12 +134,14 @@ def create_train_times_keyboard(train_times: List[tuple], current_time: Optional
     
     return InlineKeyboardMarkup(keyboard)
 
-def create_train_details_keyboard(train_index: int, show_subscribe: bool = True) -> InlineKeyboardMarkup:
+def create_train_details_keyboard(train_index: int, show_subscribe: bool = True, show_refresh: bool = True) -> InlineKeyboardMarkup:
     """Create keyboard for train details view."""
     keyboard = []
     
     if show_subscribe:
         keyboard.append([InlineKeyboardButton("🔔 Subscribe", callback_data=f"subscribe_train_{train_index}")])
+    
+    if show_refresh:
         keyboard.append([InlineKeyboardButton("🔄 Refresh", callback_data=f"refresh_status_{train_index}")])
     
     keyboard.append([InlineKeyboardButton("Back to Train List", callback_data=f"{CallbackPrefix.STATUS}_back_to_times")])

@@ -73,13 +73,28 @@ def format_train_details(
 
 def format_subscription_details(subscription: Dict[str, Any]) -> str:
     """Format subscription details message."""
-    return (
-        f"Please confirm your subscription:\n\n"
+    message = [
+        "Please confirm your subscription:\n",
         f"Route: {subscription['departure_station']['name']} → {subscription['arrival_station']['name']}\n"
-        f"Day: {subscription['day_of_week']['name']}\n"
-        f"Time: {subscription['departure_time']['formatted']}\n\n"
-        f"You will receive notifications about this train's status every week."
-    )
+    ]
+    
+    # Handle day_of_week which might be None
+    if subscription['day_of_week'] is not None:
+        message.append(f"Day: {subscription['day_of_week']['name']}\n")
+    else:
+        message.append("Day: Today (current day)\n")
+    
+    # Handle departure_time format which might be a string or a dict
+    if isinstance(subscription['departure_time'], dict) and 'formatted' in subscription['departure_time']:
+        time_str = subscription['departure_time']['formatted']
+    else:
+        # Assume it's an ISO string and extract time portion
+        time_str = subscription['departure_time'].split('T')[1][:5]  # Get HH:MM from ISO format
+    
+    message.append(f"Time: {time_str}\n\n")
+    message.append("You will receive notifications about this train's status every week.")
+    
+    return "".join(message)
 
 def format_subscriptions_list(subscriptions: List[Dict[str, Any]]) -> str:
     """Format list of subscriptions."""

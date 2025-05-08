@@ -1,9 +1,15 @@
 """Additional status command handlers for the train bot."""
 
 from datetime import datetime, timedelta
+import logging
+
+# Configure logger
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 from telegram import Update
 from telegram.ext import ContextTypes, ConversationHandler
+import telegram.error
 
 import train_facade
 from train_stations import TRAIN_STATIONS
@@ -19,6 +25,7 @@ from .common import (
     clear_message_context,
     log_callback
 )
+from .status import show_status_all_stations
 
 async def select_status_date(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Show date selection for future train status."""
@@ -81,6 +88,13 @@ async def get_future_train_status(update: Update, context: ContextTypes.DEFAULT_
     # Adjust for Sunday=0 in our system vs Monday=0 in Python's
     day_of_week = (day_of_week + 1) % 7
     
+    # Add day of week to the context with a human-readable name
+    day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    status_context["date"]["day_of_week"] = {
+        "value": day_of_week,
+        "name": day_names[day_of_week]
+    }
+    
     try:
         # Get train times
         train_times = train_facade.get_train_times(
@@ -130,6 +144,21 @@ async def get_current_train_status(update: Update, context: ContextTypes.DEFAULT
     
     # Get the day of week
     day_of_week = (now.weekday() + 1) % 7  # Adjust for Sunday=0
+    
+    # Add day of week to the context with a human-readable name
+    day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+    # Make sure the date object exists
+    if "date" not in status_context:
+        status_context["date"] = {
+            "raw": now.strftime("%Y-%m-%d"),
+            "formatted": now.strftime("%A, %B %d, %Y")
+        }
+    
+    # Add day of week information
+    status_context["date"]["day_of_week"] = {
+        "value": day_of_week,
+        "name": day_names[day_of_week]
+    }
     
     try:
         # Get train times
@@ -195,26 +224,41 @@ async def show_train_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
+    user = update.effective_user
+    logger.info(f"User {user.id} ({user.username}) requested train details with callback data: {query.data}")
+    
     status_context = get_message_context(update, context, "status")
+    logger.debug(f"Status context in show_train_details: {status_context}")
     
     try:
         # Handle back to train list request
         if query.data == f"{CallbackPrefix.STATUS}_back_to_times":
+            logger.debug("Going back to train times list")
             if status_context["type"] == "future":
                 return await get_future_train_status(update, context)
             else:
                 return await get_current_train_status(update, context)
         
-        # Extract train index
-        train_index = int(query.data.split("_")[-1])
+        # First check if there's a stored train index from refresh
+        train_index = context.user_data.pop("selected_train_index", None)
+        
+        # If not, extract from callback data
+        if train_index is None:
+            train_index = int(query.data.split("_")[-1])
+            
+        logger.debug(f"Using train_index in show_train_details: {train_index}")
         
         # Get train details
-        train_times = status_context["train_times"]
+        train_times = status_context.get("train_times", [])
+        logger.debug(f"Train times available: {len(train_times)} trains")
+        
         if train_index >= len(train_times):
+            logger.error(f"Invalid train index: {train_index}, only {len(train_times)} trains available")
             await query.edit_message_text("Invalid train selection. Please try again.")
             return ConversationHandler.END
         
         departure_time, arrival_time, switches = train_times[train_index]
+        logger.debug(f"Showing details for train: {departure_time} -> {arrival_time} with {switches} switches")
         
         # Get current time and format times
         now = datetime.now()
@@ -223,11 +267,15 @@ async def show_train_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         try:
             # Get train status
+            logger.debug(f"Fetching train status from API for departure: {departure_time}")
+            logger.debug(f"Departure station: {status_context['departure_station']['id']}, Arrival station: {status_context['arrival_station']['id']}")
+            
             train_status = train_facade.get_delay_from_api(
                 status_context["departure_station"]["id"],
                 status_context["arrival_station"]["id"],
                 departure_time
             )
+            logger.debug(f"API returned delay of {train_status.delay_in_minutes} minutes")
             
             # Format message
             message = format_train_details(
@@ -242,7 +290,8 @@ async def show_train_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 last_updated=now
             )
             
-        except train_facade.TrainNotFoundError:
+        except train_facade.TrainNotFoundError as tnf:
+            logger.warning(f"Train not found in API: {str(tnf)}")
             # Format message without status
             message = format_train_details(
                 status_context["departure_station"],
@@ -253,6 +302,19 @@ async def show_train_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 date=datetime.strptime(status_context["date"]["raw"], "%Y-%m-%d") if "date" in status_context else None,
                 last_updated=now
             )
+        except Exception as api_error:
+            logger.error(f"Error getting train status from API: {str(api_error)}", exc_info=api_error)
+            # Format message without status but mention the error
+            message = format_train_details(
+                status_context["departure_station"],
+                status_context["arrival_station"],
+                departure_dt,
+                arrival_dt,
+                switches,
+                date=datetime.strptime(status_context["date"]["raw"], "%Y-%m-%d") if "date" in status_context else None,
+                last_updated=now
+            )
+            message += f"\n\nNote: Could not retrieve current delay information due to an API error."
         
         # Add subscription note
         message += (
@@ -263,15 +325,28 @@ async def show_train_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Create keyboard
         keyboard = create_train_details_keyboard(
             train_index,
-            show_subscribe=status_context["type"] == "future"
+            show_subscribe=True,  # Always show subscribe for both current and future trains
+            show_refresh=True     # Always show refresh for both current and future trains
         )
         
-        await query.edit_message_text(message, reply_markup=keyboard)
+        logger.debug("Sending train details to user")
+        try:
+            await query.edit_message_text(message, reply_markup=keyboard)
+        except telegram.error.BadRequest as e:
+            # Handle case when content hasn't changed (common during refresh)
+            if "Message is not modified" in str(e):
+                logger.info("Message content unchanged, sending notification")
+                await query.answer("No changes to train status", show_alert=True)
+            else:
+                # Re-raise if it's a different BadRequest error
+                raise
+        
         return ConversationState.SELECT_TIME
         
     except Exception as e:
+        logger.error(f"Error showing train details: {str(e)}", exc_info=e)
         await query.edit_message_text(
-            "Sorry, there was an error showing the train details. Please try again."
+            f"Sorry, there was an error showing the train details: {str(e)}. Please try again."
         )
         return ConversationHandler.END
 
@@ -280,16 +355,32 @@ async def refresh_train_status(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     
+    user = update.effective_user
+    logger.info(f"User {user.id} ({user.username}) clicked refresh button with callback data: {query.data}")
+    
     try:
-        # Extract train index and update data
+        # Extract train index
         train_index = int(query.data.split("_")[-1])
-        query.data = f"{CallbackPrefix.STATUS}_time_{train_index}"
+        logger.debug(f"Extracted train_index: {train_index}")
+        
+        status_context = get_message_context(update, context, "status")
+        logger.debug(f"Status context: {status_context}")
+        
+        # Log train details before refreshing
+        if "train_times" in status_context and train_index < len(status_context["train_times"]):
+            departure_time, arrival_time, switches = status_context["train_times"][train_index]
+            logger.debug(f"Refreshing train: {departure_time} -> {arrival_time} with {switches} switches")
+        
+        # Store train index in context instead of modifying query.data
+        context.user_data["selected_train_index"] = train_index
+        logger.debug(f"Stored train_index {train_index} in context.user_data")
         
         # Show updated details
         return await show_train_details(update, context)
         
     except Exception as e:
+        logger.error(f"Error refreshing train status: {str(e)}", exc_info=e)
         await query.edit_message_text(
-            "Sorry, there was an error refreshing the train status. Please try again."
+            f"Sorry, there was an error refreshing the train status: {str(e)}. Please try again."
         )
         return ConversationHandler.END

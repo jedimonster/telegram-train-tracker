@@ -180,11 +180,16 @@ async def handle_subscription_confirmation(update: Update, context: ContextTypes
         )
         
         # Create subscription
+        # Extract day_of_week value if it's a dictionary
+        day_of_week = subscription_context["day_of_week"]
+        if isinstance(day_of_week, dict) and "value" in day_of_week:
+            day_of_week = day_of_week["value"]
+        
         subscription_id = await create_subscription(
             user_id,
             subscription_context["departure_station"]["id"],
             subscription_context["arrival_station"]["id"],
-            subscription_context["day_of_week"],
+            day_of_week,
             subscription_context["departure_time"]
         )
         
