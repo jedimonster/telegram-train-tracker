@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 from datetime import date
+from cachetools import cached, TTLCache
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -21,6 +22,19 @@ init_env()
 RAIL_API_ENDPOINT = 'https://israelrail.azurefd.net/rjpa-prod/api/v1/timetable/searchTrainLuzForDateTime?fromStation={from_station}&toStation={to_station}&date' \
                     '={day}&hour={hour}&scheduleType=1&systemType=1&language"id"="hebrew"'
 RAIL_API_KEY = os.environ['RAIL_TOKEN']
+
+# Initialize cache with 10 second TTL
+timetable_cache = TTLCache(maxsize=100, ttl=10)
+
+def get_cache_stats():
+    """Get statistics about the cache usage."""
+    return {
+        "size": timetable_cache.currsize,
+        "maxsize": timetable_cache.maxsize,
+        "ttl": timetable_cache.ttl,
+        "hits": getattr(timetable_cache, "hits", 0),
+        "misses": getattr(timetable_cache, "misses", 0)
+    }
 
 
 def get_train_times(departure_station, arrival_station, day_num=None):
@@ -65,7 +79,12 @@ def get_train_times(departure_station, arrival_station, day_num=None):
         raise Exception(f"Failed to get train times: {str(e)}")
 
 
+@cached(cache=timetable_cache)
 def get_timetable(departure_station, arrival_station, day, hour):
+    """Get timetable from API with caching (10 second TTL)."""
+    # Log that this is a cache miss, since we're executing the function
+    logger.debug(f"Cache miss for timetable: {departure_station}->{arrival_station} on {day} at {hour}")
+    print("CACHE MISS *****************")
     try:
         uri = RAIL_API_ENDPOINT.format(from_station=departure_station, to_station=arrival_station, day=day,
                                     hour=hour)
