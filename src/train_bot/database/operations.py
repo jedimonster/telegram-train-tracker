@@ -58,6 +58,40 @@ async def add_favorite_station(user_id: int, station_id: str) -> bool:
     
     return success
 
+async def get_subscription_by_id(subscription_id: int) -> Optional[Dict[str, Any]]:
+    """Get subscription details by ID."""
+    try:
+        async with aiosqlite.connect(DB_PATH) as conn:
+            async with conn.execute(
+                """
+                SELECT s.subscription_id, s.user_id, u.telegram_id,
+                       s.departure_station, s.arrival_station, s.day_of_week, 
+                       s.departure_time, s.last_status
+                FROM subscriptions s
+                JOIN users u ON s.user_id = u.user_id
+                WHERE subscription_id = ?
+                """,
+                (subscription_id,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                
+                if not row:
+                    return None
+                
+                return {
+                    "id": row[0],
+                    "user_id": row[1],
+                    "telegram_id": row[2],
+                    "departure_station": row[3],
+                    "arrival_station": row[4],
+                    "day_of_week": row[5],
+                    "departure_time": row[6],
+                    "last_status": row[7]
+                }
+    except Exception as e:
+        print(f"Error getting subscription by ID: {e}")
+        return None
+
 async def remove_favorite_station(user_id: int, station_id: str) -> bool:
     """Remove a station from user's favorites."""
     success = False

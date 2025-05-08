@@ -52,7 +52,8 @@ from .handlers.favorites import (
 from .handlers.notifications import (
     pause_notifications_command,
     resume_notifications_command,
-    settings_command
+    settings_command,
+    refresh_notification_status
 )
 from .handlers.subscriptions import (
     subscriptions_command,
@@ -199,6 +200,11 @@ async def create_application() -> Application:
     application.add_handler(CommandHandler("settings", settings_command))
     application.add_handler(CommandHandler("pause", pause_notifications_command))
     application.add_handler(CommandHandler("resume", resume_notifications_command))
+    
+    # Add notification refresh handler
+    application.add_handler(
+        CallbackQueryHandler(refresh_notification_status, pattern="^refresh_notif_")
+    )
     
     return application
 

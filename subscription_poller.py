@@ -24,6 +24,8 @@ from telegram.ext import ApplicationBuilder
 import train_facade
 from train_stations import TRAIN_STATIONS
 from src.train_bot.utils.date_utils import WEEKDAYS, next_weekday
+from src.train_bot.utils.formatting import format_train_details
+from src.train_bot.utils.keyboards import create_train_details_keyboard
 from load_env import init_env
 
 # Configure logging
@@ -170,28 +172,52 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                     dep_name = get_station_name(departure_station)
                     arr_name = get_station_name(arrival_station)
                     
-                    if current_status["status"] == "delayed":
-                        message = (
-                            f"🚨 Train Update: {dep_name} → {arr_name}\n"
-                            f"Scheduled: {departure_dt.strftime('%H:%M')}\n"
-                            f"Status: Delayed by {current_status['delay_minutes']} minutes\n"
-                            f"New departure: {datetime.fromisoformat(current_status['updated_departure']).strftime('%H:%M')}"
-                        )
-                    else:
-                        message = (
-                            f"✅ Train Update: {dep_name} → {arr_name}\n"
-                            f"Scheduled: {departure_dt.strftime('%H:%M')}\n"
-                            f"Status: On time"
-                        )
+                    # Create station objects in the format expected by format_train_details
+                    departure_station_obj = {"name": dep_name, "id": departure_station}
+                    arrival_station_obj = {"name": arr_name, "id": arrival_station}
                     
-                    # Add information about station switches if applicable
-                    if current_status.get("switch_stations"):
-                        switches = current_status["switch_stations"]
-                        message += f"\n\n⚠️ Note: This journey requires changing trains at: {', '.join(switches)}"
+                    # Parse times
+                    departure_dt = datetime.fromisoformat(departure_time)
+                    arrival_dt = datetime.fromisoformat(current_status.get("updated_arrival", departure_time))
                     
-                    # Send the message
+                    # Get switches information
+                    switch_stations = current_status.get("switch_stations", [])
+                    switches = len(switch_stations) if switch_stations is not None else 0
+                    
+                    # Format message using the same function as status flow
+                    message = format_train_details(
+                        departure_station=departure_station_obj,
+                        arrival_station=arrival_station_obj,
+                        departure_time=departure_dt,
+                        arrival_time=arrival_dt,
+                        switches=switches,
+                        delay_minutes=current_status.get("delay_minutes", 0),
+                        switch_stations=current_status.get("switch_stations", []),
+                        last_updated=datetime.now()
+                    )
+                    
+                    # Add status update information
+                    message += (
+                        "\n\n🚨 This is a status update for your subscribed train.\n"
+                        "To manage your subscriptions, use the /subscriptions command."
+                    )
+                    
+                    # Create a callback data string with subscription ID which contains all needed info
+                    callback_data = f"refresh_notif_{subscription_id}"
+                    
+                    # Create keyboard with the subscription-specific refresh callback
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Refresh", callback_data=callback_data)]
+                    ])
+                    
+                    # Send the message with keyboard
                     bot = await get_bot()
-                    await bot.send_message(chat_id=telegram_id, text=message)
+                    await bot.send_message(
+                        chat_id=telegram_id, 
+                        text=message,
+                        reply_markup=keyboard
+                    )
                     notifications_sent += 1
                     
                     # Log the notification
@@ -216,22 +242,52 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                     dep_name = get_station_name(departure_station)
                     arr_name = get_station_name(arrival_station)
                     
-                    message = (
-                        f"🔔 Departure Reminder: {dep_name} → {arr_name}\n"
-                        f"Scheduled departure: {departure_dt.strftime('%H:%M')}\n"
+                    # Create station objects in the format expected by format_train_details
+                    departure_station_obj = {"name": dep_name, "id": departure_station}
+                    arrival_station_obj = {"name": arr_name, "id": arrival_station}
+                    
+                    # Parse times
+                    departure_dt = datetime.fromisoformat(departure_time)
+                    arrival_dt = datetime.fromisoformat(current_status.get("updated_arrival", departure_time)) 
+                    
+                    # Get switches information
+                    switch_stations = current_status.get("switch_stations", [])
+                    switches = len(switch_stations) if switch_stations is not None else 0
+                    
+                    # Format message using the same function as status flow
+                    message = format_train_details(
+                        departure_station=departure_station_obj,
+                        arrival_station=arrival_station_obj,
+                        departure_time=departure_dt,
+                        arrival_time=arrival_dt,
+                        switches=switches,
+                        delay_minutes=current_status.get("delay_minutes", 0),
+                        switch_stations=current_status.get("switch_stations", []),
+                        last_updated=datetime.now()
                     )
                     
-                    if current_status["status"] == "delayed":
-                        message += (
-                            f"Status: Delayed by {current_status['delay_minutes']} minutes\n"
-                            f"New departure: {datetime.fromisoformat(current_status['updated_departure']).strftime('%H:%M')}"
-                        )
-                    else:
-                        message += "Status: On time"
+                    # Add subscription information
+                    message += (
+                        "\n\n🔔 This is a departure reminder for your subscribed train.\n"
+                        "To manage your subscriptions, use the /subscriptions command."
+                    )
                     
-                    # Send the message
+                    # Create a callback data string with subscription ID which contains all needed info
+                    callback_data = f"refresh_notif_{subscription_id}"
+                    
+                    # Create keyboard with the subscription-specific refresh callback
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+                    keyboard = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Refresh", callback_data=callback_data)]
+                    ])
+                    
+                    # Send the message with keyboard
                     bot = await get_bot()
-                    await bot.send_message(chat_id=telegram_id, text=message)
+                    await bot.send_message(
+                        chat_id=telegram_id, 
+                        text=message,
+                        reply_markup=keyboard
+                    )
                     notifications_sent += 1
                     
                     # Mark that we've sent the departure reminder
