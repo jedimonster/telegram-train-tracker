@@ -72,7 +72,8 @@ def get_station_name(station_id):
 async def check_subscription(subscription_id, user_id, telegram_id, departure_station, 
                            arrival_station, day_of_week, departure_time, 
                            last_status_json, notification_before_departure, 
-                           notification_delay_threshold, notifications_paused=False):
+                           notification_delay_threshold, notifications_paused=False,
+                           hours_before_departure=1):
     """
     Check a single subscription for status changes and send notifications if needed.
     
@@ -104,8 +105,13 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
         is_subscription_day = current_day == day_of_week
         is_day_before = (current_day + 1) % 7 == day_of_week
         
+        # Add detailed logging for day check
+        logger.debug(f"Subscription {subscription_id}: Current day={current_day}, Subscription day={day_of_week}")
+        logger.debug(f"Subscription {subscription_id}: Is subscription day: {is_subscription_day}, Is day before: {is_day_before}")
+        
         # If it's not the subscription day or the day before, no need to check
         if not (is_subscription_day or is_day_before):
+            logger.debug(f"Subscription {subscription_id}: Skipping check - not subscription day or day before")
             return last_status_json, 0
         
         # Get the next occurrence of this train
@@ -122,11 +128,13 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
         
         # If the train has already departed today, no need to check
         if is_subscription_day and train_datetime < datetime.now():
+            logger.debug(f"Subscription {subscription_id}: Train already departed today - skipping check")
             return last_status_json, 0
         
         # Time until departure
         time_until_departure = train_datetime - datetime.now()
         hours_until_departure = time_until_departure.total_seconds() / 3600
+        logger.debug(f"Subscription {subscription_id}: Train datetime: {train_datetime}, Hours until departure: {hours_until_departure:.2f}")
         
         # Parse the last status
         try:
@@ -138,13 +146,15 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
         notifications_sent = 0
         current_status = {"status": "unknown", "delay_minutes": 0}
         
-        # Only check status if within 1 hours of departure
-        if hours_until_departure <= 1:
+        # Only check status if within specified hours of departure
+        logger.debug(f"Subscription {subscription_id}: Checking if {hours_until_departure:.2f} hours ≤ {hours_before_departure} hours (hours_before_departure)")
+        if hours_until_departure <= hours_before_departure:
             try:
                 # Format time for API
                 api_time_format = train_datetime.strftime("%Y-%m-%dT%H:%M:%S")
                 
                 logger.info("Checking updates for subscription %s for train on %s", subscription_id, train_datetime)
+                logger.debug(f"Subscription {subscription_id}: Calling API for {get_station_name(departure_station)} → {get_station_name(arrival_station)} at {api_time_format}")
                 # Get train status from facade
                 train_times = train_facade.get_delay_from_api(
                     departure_station, arrival_station, api_time_format
@@ -159,16 +169,60 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                     "switch_stations": train_times.switch_stations
                 }
                 
-                # Check for status changes that require notification
-                status_changed = (
-                    last_status.get("status") != current_status["status"] or
-                    abs(last_status.get("delay_minutes", 0) - current_status["delay_minutes"]) >= notification_delay_threshold
-                )
+                # Define key conditions for notifications
+                status_type_changed = last_status.get("status") != current_status["status"]
+                delay_minutes_changed = last_status.get("delay_minutes", 0) != current_status["delay_minutes"]
+                train_is_delayed = current_status["status"] == "delayed" and current_status["delay_minutes"] > 0
+                was_notified_of_delay = last_status.get("status") == "delayed" and "last_notification_sent_at" in last_status
 
-                logger.info("Subscription %s prevStatus: %s currStatus: %s", subscription_id, last_status["status"], current_status["status"])
+                # Log notification decision details
+                logger.debug(f"Subscription {subscription_id}: Status type changed: {status_type_changed}")
+                logger.debug(f"Subscription {subscription_id}: Delay minutes changed: {delay_minutes_changed}")
+                logger.debug(f"Subscription {subscription_id}: Train is delayed: {train_is_delayed}")
+                logger.debug(f"Subscription {subscription_id}: Was previously notified of delay: {was_notified_of_delay}")
+                logger.debug(f"Subscription {subscription_id}: Current delay: {current_status['delay_minutes']} min, threshold: {notification_delay_threshold} min")
                 
-                # Send notification if status changed significantly and notifications are not paused
-                if status_changed and not notifications_paused:
+                # Determine if we should send a notification
+                should_send_notification = False
+                if status_type_changed:
+                    # Always notify when status changes between delayed/on-time
+                    should_send_notification = True
+                    logger.info("Subscription %s: Status type changed from %s to %s", 
+                               subscription_id, last_status.get("status"), current_status["status"])
+                elif train_is_delayed:
+                    if was_notified_of_delay:
+                        # If already notified about delay, send updates for ANY delay change
+                        should_send_notification = delay_minutes_changed
+                        if delay_minutes_changed:
+                            logger.info("Subscription %s: Delay updated from %s to %s minutes", 
+                                       subscription_id, last_status.get("delay_minutes", 0), current_status["delay_minutes"])
+                    else:
+                        # First delay notification - only if it exceeds threshold
+                        should_send_notification = current_status["delay_minutes"] >= notification_delay_threshold
+                        if should_send_notification:
+                            logger.info("Subscription %s: Initial delay notification of %s minutes", 
+                                       subscription_id, current_status["delay_minutes"])
+                        else:
+                            logger.debug(f"Subscription {subscription_id}: Not sending notification - delay of {current_status['delay_minutes']} min is below threshold of {notification_delay_threshold} min")
+                else:
+                    # For non-delayed trains, use the threshold
+                    delay_change = abs(last_status.get("delay_minutes", 0) - current_status["delay_minutes"])
+                    logger.debug(f"Subscription {subscription_id}: Delay change is {delay_change} min")
+                    should_send_notification = delay_change >= notification_delay_threshold
+                    if should_send_notification:
+                        logger.info("Subscription %s: Non-delayed train status changed significantly", subscription_id)
+                    else:
+                        logger.debug(f"Subscription {subscription_id}: Not sending notification - delay change of {delay_change} min is below threshold")
+
+                logger.info("Subscription %s prevStatus: %s currStatus: %s shouldNotify: %s", 
+                           subscription_id, last_status.get("status"), current_status["status"], should_send_notification)
+                
+                # Track notification time if sending
+                if should_send_notification:
+                    current_status["last_notification_sent_at"] = datetime.now().isoformat()
+                
+                # Send notification if we should and notifications are not paused
+                if should_send_notification and not notifications_paused:
                     dep_name = get_station_name(departure_station)
                     arr_name = get_station_name(arrival_station)
                     
@@ -227,7 +281,7 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                             (subscription_id, "status_change", message)
                         )
                         await conn.commit()
-                elif status_changed and notifications_paused:
+                elif should_send_notification and notifications_paused:
                     logger.info(f"Status change for subscription {subscription_id} not sent - notifications paused")
                 
                 # Check if we need to send a departure reminder
@@ -307,13 +361,16 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                     current_status["departure_reminder_sent"] = True
                 
             except train_facade.TrainNotFoundError:
-                logger.warning(f"Train not found for subscription {subscription_id}")
+                logger.warning(f"Train not found for subscription {subscription_id} from {get_station_name(departure_station)} to {get_station_name(arrival_station)} at {api_time_format}")
                 current_status = {"status": "not_found", "delay_minutes": 0}
             except Exception as e:
                 logger.error(f"Error checking train status for subscription {subscription_id}: {e}")
                 # Keep the last status in case of error
                 current_status = last_status
         
+        else:
+            logger.debug(f"Subscription {subscription_id}: Skipping status check - train departs in {hours_until_departure:.2f} hours which is > {hours_before_departure} hours threshold")
+            
         # Return the updated status
         return json.dumps(current_status), notifications_sent
         

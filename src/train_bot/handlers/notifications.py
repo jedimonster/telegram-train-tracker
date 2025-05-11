@@ -178,6 +178,16 @@ async def refresh_notification_status(update: Update, context: ContextTypes.DEFA
                 message,
                 reply_markup=keyboard
             )
+            # Try to preserve fields from previous status
+            try:
+                prev_status = json.loads((await get_subscription_by_id(subscription_id))["last_status"] or "{}")
+                # Keep important fields from previous status
+                departure_reminder_sent = prev_status.get("departure_reminder_sent", False)
+                last_notification_sent_at = prev_status.get("last_notification_sent_at")
+            except (json.JSONDecodeError, TypeError):
+                departure_reminder_sent = False
+                last_notification_sent_at = None
+                
             # Update status in database
             updated_status = {
                 "status": "delayed" if train_times.delay_in_minutes > 0 else "on-time",
@@ -185,8 +195,12 @@ async def refresh_notification_status(update: Update, context: ContextTypes.DEFA
                 "updated_departure": train_times.get_updated_departure().isoformat(),
                 "updated_arrival": train_times.get_updated_arrival().isoformat(),
                 "switch_stations": train_times.switch_stations,
-                "departure_reminder_sent": True  # Keep this flag if it was set
+                "departure_reminder_sent": departure_reminder_sent  # Keep this flag if it was set
             }
+            
+            # Preserve notification tracking field if it exists
+            if last_notification_sent_at:
+                updated_status["last_notification_sent_at"] = last_notification_sent_at
             
             async with aiosqlite.connect(DB_PATH) as conn:
                 await conn.execute(
