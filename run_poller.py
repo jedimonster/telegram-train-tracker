@@ -130,6 +130,12 @@ async def run_test_notification(subscription_id):
                 logger.debug(f"  Notification settings: {notification_before_departure} min before, {notification_delay_threshold} min threshold")
                 logger.debug(f"  Notifications paused: {notifications_paused}")
                 
+                # Check for paused notifications
+                if notifications_paused:
+                    logger.warning(f"Notifications are paused for subscription ID {subscription_id}. Test notification will not be sent.")
+                    logger.info("To test notifications, unpause notifications for this user first.")
+                    return
+                
                 # Force notification by setting last_status to trigger a status change
                 forced_status = json.dumps({"status": "unknown", "delay_minutes": 0})
                 logger.debug("TEST MODE: Setting forced_status to trigger notification")
@@ -144,7 +150,6 @@ async def run_test_notification(subscription_id):
                     departure_station, arrival_station, 
                     day_of_week, departure_time, forced_status,
                     notification_before_departure, notification_delay_threshold,
-                    False,  # Override notifications_paused to ensure notification is sent
                     hours_before_departure=hours_before_departure
                 )
                 

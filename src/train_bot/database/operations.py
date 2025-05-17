@@ -7,8 +7,15 @@ from typing import List, Dict, Optional, Tuple, Any
 
 from .models import DB_PATH
 
-async def get_or_create_user(telegram_id: int, username: str = None, first_name: str = None, 
-                           last_name: str = None, language_code: str = None) -> int:
+# Default user preferences
+DEFAULT_USER_PREFERENCES = {
+    "notification_before_departure": 15,
+    "notification_delay_threshold": 5,
+    "notifications_paused": False
+}
+
+async def get_or_create_user(telegram_id: int, username: Optional[str] = None, first_name: Optional[str] = None, 
+                           last_name: Optional[str] = None, language_code: Optional[str] = None) -> Optional[int]:
     """Get a user from the database or create if not exists."""
     async with aiosqlite.connect(DB_PATH) as conn:
         async with conn.execute(
@@ -198,3 +205,24 @@ async def update_notification_settings(user_id: int, paused: bool) -> bool:
         print(f"Error updating notification settings: {e}")
     
     return success
+
+async def get_user_preferences(user_id: int) -> Dict[str, Any]:
+    """Get user preferences including notification settings."""
+    async with aiosqlite.connect(DB_PATH) as conn:
+        async with conn.execute(
+            """
+            SELECT notification_before_departure, notification_delay_threshold,
+                   notifications_paused
+            FROM users
+            WHERE user_id = ?
+            """,
+            (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "notification_before_departure": row[0],
+                    "notification_delay_threshold": row[1],
+                    "notifications_paused": bool(row[2])
+                }
+            return DEFAULT_USER_PREFERENCES.copy()  # Return a copy to prevent mutation

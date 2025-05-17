@@ -44,7 +44,7 @@ DB_PATH = "train_bot.db"
 init_env()
 
 # Telegram bot token
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 
 # Global bot instance
 _bot = None
@@ -56,6 +56,9 @@ async def get_bot():
     if _bot is None:
         # Initialize with default connection pool settings for v20+
         # which has better defaults than the previous versions
+        if not TELEGRAM_TOKEN:
+            logger.error("No Telegram token available")
+            raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set")
         _bot = telegram.Bot(token=TELEGRAM_TOKEN)
     return _bot
 
@@ -72,8 +75,7 @@ def get_station_name(station_id):
 async def check_subscription(subscription_id, user_id, telegram_id, departure_station, 
                            arrival_station, day_of_week, departure_time, 
                            last_status_json, notification_before_departure, 
-                           notification_delay_threshold, notifications_paused=False,
-                           hours_before_departure=1):
+                           notification_delay_threshold, hours_before_departure=1):
     """
     Check a single subscription for status changes and send notifications if needed.
     
@@ -149,10 +151,11 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
         # Only check status if within specified hours of departure
         logger.debug(f"Subscription {subscription_id}: Checking if {hours_until_departure:.2f} hours ≤ {hours_before_departure} hours (hours_before_departure)")
         if hours_until_departure <= hours_before_departure:
+            # Initialize api_time_format outside the try block so it's always defined
+            # This fixes the "api_time_format is possibly unbound" error in the exception handler
+            api_time_format = train_datetime.strftime("%Y-%m-%dT%H:%M:%S")
+            
             try:
-                # Format time for API
-                api_time_format = train_datetime.strftime("%Y-%m-%dT%H:%M:%S")
-                
                 logger.info("Checking updates for subscription %s for train on %s", subscription_id, train_datetime)
                 logger.debug(f"Subscription {subscription_id}: Calling API for {get_station_name(departure_station)} → {get_station_name(arrival_station)} at {api_time_format}")
                 # Get train status from facade
@@ -221,8 +224,8 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                 if should_send_notification:
                     current_status["last_notification_sent_at"] = datetime.now().isoformat()
                 
-                # Send notification if we should and notifications are not paused
-                if should_send_notification and not notifications_paused:
+                # Send notification if we should
+                if should_send_notification:
                     dep_name = get_station_name(departure_station)
                     arr_name = get_station_name(arrival_station)
                     
@@ -282,15 +285,11 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                             (subscription_id, "status_change", message)
                         )
                         await conn.commit()
-                elif should_send_notification and notifications_paused:
-                    logger.info(f"Status change for subscription {subscription_id} not sent - notifications paused")
-                
                 # Check if we need to send a departure reminder
                 minutes_until_departure = time_until_departure.total_seconds() / 60
                 should_send_reminder = (
                     notification_before_departure <= minutes_until_departure <= notification_before_departure + 5 and
-                    "departure_reminder_sent" not in last_status and
-                    not notifications_paused
+                    "departure_reminder_sent" not in last_status
                 )
                 
             except train_facade.TrainNotFoundError:
@@ -314,61 +313,61 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
 
 async def poll_subscriptions():
     """Poll all active subscriptions and send notifications if needed."""
+    conn = None
     try:
         # Connect to database
-        async with aiosqlite.connect(DB_PATH) as conn:
-            # Get all active subscriptions with user info
-            async with conn.execute("""
-            SELECT 
-                s.subscription_id, s.user_id, u.telegram_id, 
-                s.departure_station, s.arrival_station, 
-                s.day_of_week, s.departure_time, s.last_status,
-                u.notification_before_departure, u.notification_delay_threshold
-            FROM subscriptions s
-            JOIN users u ON s.user_id = u.user_id
-            WHERE s.active = 1
+        conn = await aiosqlite.connect(DB_PATH)
+        # Get all active subscriptions with user info, excluding users with paused notifications
+        async with conn.execute("""
+        SELECT 
+            s.subscription_id, s.user_id, u.telegram_id, 
+            s.departure_station, s.arrival_station, 
+            s.day_of_week, s.departure_time, s.last_status,
+            u.notification_before_departure, u.notification_delay_threshold
+        FROM subscriptions s
+        JOIN users u ON s.user_id = u.user_id
+        WHERE s.active = 1 AND u.notifications_paused = 0
         """) as cursor:
-                subscriptions = await cursor.fetchall()
-                logger.info(f"Checking {len(subscriptions)} active subscriptions")
+            subscriptions = list(await cursor.fetchall())
+            logger.info(f"Checking {len(subscriptions)} active subscriptions (excluding paused users)")
+            
+            total_notifications = 0
+            
+            # Check each subscription
+            for subscription in subscriptions:
+                (
+                    subscription_id, user_id, telegram_id, 
+                    departure_station, arrival_station, 
+                    day_of_week, departure_time, last_status,
+                    notification_before_departure, notification_delay_threshold
+                ) = subscription
                 
-                total_notifications = 0
+                # Check this subscription
+                updated_status, notifications_sent = await check_subscription(
+                    subscription_id, user_id, telegram_id, 
+                    departure_station, arrival_station, 
+                    day_of_week, departure_time, last_status,
+                    notification_before_departure, notification_delay_threshold
+                )
                 
-                # Check each subscription
-                for subscription in subscriptions:
-                    (
-                        subscription_id, user_id, telegram_id, 
-                        departure_station, arrival_station, 
-                        day_of_week, departure_time, last_status,
-                        notification_before_departure, notification_delay_threshold
-                    ) = subscription
-                    
-                    # Check this subscription
-                    updated_status, notifications_sent = await check_subscription(
-                        subscription_id, user_id, telegram_id, 
-                        departure_station, arrival_station, 
-                        day_of_week, departure_time, last_status,
-                        notification_before_departure, notification_delay_threshold,
-                        False  # Default to notifications not paused
-                    )
-                    
-                    total_notifications += notifications_sent
-                    
-                    # Update the last status and check time
-                    await conn.execute(
-                        """
-                        UPDATE subscriptions 
-                        SET last_status = ?, last_checked = ? 
-                        WHERE subscription_id = ?
-                        """,
-                        (updated_status, datetime.now().isoformat(), subscription_id)
-                    )
-                    await conn.commit()
-                logger.info(f"Polling complete. Sent {total_notifications} notifications.")
-        
+                total_notifications += notifications_sent
+                
+                # Update the last status and check time
+                await conn.execute(
+                    """
+                    UPDATE subscriptions 
+                    SET last_status = ?, last_checked = ? 
+                    WHERE subscription_id = ?
+                    """,
+                    (updated_status, datetime.now().isoformat(), subscription_id)
+                )
+                await conn.commit()
+            logger.info(f"Polling complete. Sent {total_notifications} notifications.")
+    
     except Exception as e:
         logger.error(f"Error in poll_subscriptions: {e}")
     finally:
-        if 'conn' in locals():
+        if conn is not None:
             await conn.close()
 
 
