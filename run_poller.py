@@ -29,7 +29,7 @@ import json
 import aiosqlite
 from datetime import datetime
 
-import subscription_poller
+import train_bot.subscription_poller as subscription_poller
 from load_env import init_env
 
 # Enable logging

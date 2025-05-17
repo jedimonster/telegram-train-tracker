@@ -267,6 +267,7 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                     
                     # Send the message with keyboard
                     bot = await get_bot()
+
                     await bot.send_message(
                         chat_id=telegram_id, 
                         text=message,
@@ -291,74 +292,6 @@ async def check_subscription(subscription_id, user_id, telegram_id, departure_st
                     "departure_reminder_sent" not in last_status and
                     not notifications_paused
                 )
-                
-                if should_send_reminder:
-                    dep_name = get_station_name(departure_station)
-                    arr_name = get_station_name(arrival_station)
-                    
-                    # Create station objects in the format expected by format_train_details
-                    departure_station_obj = {"name": dep_name, "id": departure_station}
-                    arrival_station_obj = {"name": arr_name, "id": arrival_station}
-                    
-                    # Parse times
-                    departure_dt = datetime.fromisoformat(departure_time)
-                    arrival_dt = datetime.fromisoformat(current_status.get("updated_arrival", departure_time)) 
-                    
-                    # Get switches information
-                    switch_stations = current_status.get("switch_stations", [])
-                    switches = len(switch_stations) if switch_stations is not None else 0
-                    
-                    # Format message using the same function as status flow
-                    message = format_train_details(
-                        departure_station=departure_station_obj,
-                        arrival_station=arrival_station_obj,
-                        departure_time=departure_dt,
-                        arrival_time=arrival_dt,
-                        switches=switches,
-                        delay_minutes=current_status.get("delay_minutes", 0),
-                        switch_stations=current_status.get("switch_stations", []),
-                        last_updated=datetime.now()
-                    )
-                    
-                    # Add subscription information
-                    message += (
-                        "\n\n🔔 This is a departure reminder for your subscribed train.\n"
-                        "To manage your subscriptions, use the /subscriptions command."
-                    )
-                    
-                    # Create a callback data string with subscription ID which contains all needed info
-                    callback_data = f"refresh_notif_{subscription_id}"
-                    
-                    # Create keyboard with the subscription-specific refresh callback
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-                    keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton("🔄 Refresh", callback_data=callback_data)]
-                    ])
-                    
-                    # Send the message with keyboard
-                    bot = await get_bot()
-                    await bot.send_message(
-                        chat_id=telegram_id, 
-                        text=message,
-                        reply_markup=keyboard
-                    )
-                    notifications_sent += 1
-                    
-                    # Mark that we've sent the departure reminder
-                    current_status["departure_reminder_sent"] = True
-                    
-                    # Log the notification
-                    async with aiosqlite.connect(DB_PATH) as conn:
-                        await conn.execute(
-                            "INSERT INTO notifications (subscription_id, notification_type, message) VALUES (?, ?, ?)",
-                            (subscription_id, "departure_reminder", message)
-                        )
-                        await conn.commit()
-                elif (notification_before_departure <= minutes_until_departure <= notification_before_departure + 5 and
-                      "departure_reminder_sent" not in last_status and notifications_paused):
-                    logger.info(f"Departure reminder for subscription {subscription_id} not sent - notifications paused")
-                    # Still mark as sent so we don't keep checking
-                    current_status["departure_reminder_sent"] = True
                 
             except train_facade.TrainNotFoundError:
                 logger.warning(f"Train not found for subscription {subscription_id} from {get_station_name(departure_station)} to {get_station_name(arrival_station)} at {api_time_format}")
